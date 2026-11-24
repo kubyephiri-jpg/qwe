@@ -249,6 +249,58 @@ export default function Dashboard() {
   activeRideStatusRef.current = effectiveRideStatus;
   const { activeTrip, liveOrder, driverStatus, storeCallable, tripStatus, workflowType, markers, activePolyline, showPolyline, arrivalTime } =
   useActiveTrip(driverId, activeOrder, vehiclePosition);
+
+  // The driver has left the route: get a new one from where they are now.
+  // 1) The backend saves it to the order (client app) and to the driver's request, and the map redraws it.
+  // 2) If the backend cannot do it (missing coordinates, busy, offline) the app asks /getRoute itself and
+  //    draws that route straight away, until the order's own route changes.
+  const rerouteBusyRef = useRef(false);
+  const [localRoute, setLocalRoute] = useState<{ base: string | null; poly: string } | null>(null);
+  const activePolylineRef = useRef<string | null>(null);
+  activePolylineRef.current = activePolyline ?? null;
+  const handleOffRoute = async (lat: number, lng: number) => {
+    const phase = tripStatus;
+    if (!driverId || !effectiveRideId || !showPolyline) return;
+    if (phase !== 'accepted' && phase !== 'started' && phase !== 'picked_up') return;
+    if (rerouteBusyRef.current) return;
+    rerouteBusyRef.current = true;
+    // where this leg is heading (pickup / store while going to pickup, drop-off after the trip starts)
+    const dest = (markers || []).find((m: any) => m && (m.type === 'pickup' || m.type === 'store' || m.type === 'dropoff'));
+    try {
+      let serverOk = false;
+      try {
+        const r = await fetch(`${API_BASE}/reroutePolyline`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            driverId, orderId: effectiveRideId, currentLat: lat, currentLng: lng, phase,
+            destLat: dest?.lat, destLng: dest?.lng,
+          }),
+        });
+        const j = await r.json().catch(() => null);
+        serverOk = !!(r.ok && j && j.success);
+        if (!serverOk) console.log('[reroute] backend refused', r.status, j && j.error);
+      } catch (e) {
+        console.log('[reroute] backend call failed', e);
+      }
+      if (!serverOk && dest) {
+        const r2 = await fetch(`${API_BASE}/getRoute`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ startLat: lat, startLng: lng, endLat: dest.lat, endLng: dest.lng }),
+        });
+        const j2 = await r2.json().catch(() => null);
+        const poly = j2?.data?.encodedPolyline;
+        if (poly) setLocalRoute({ base: activePolylineRef.current, poly });
+      }
+    } catch (e) {
+      console.log('[reroute] failed', e);
+    } finally {
+      rerouteBusyRef.current = false;
+    }
+  };
+  // a local route only lives until the order's own route changes
+  const shownPolyline = localRoute && localRoute.base === (activePolyline ?? null) ? localRoute.poly : activePolyline;
   const { callState, formattedTime, startCall } = useCall();
   const { totalEarnings, loading: tripHistoryLoading } = useDriverTripHistory(driverId, 'today');
 
@@ -1201,6 +1253,8 @@ if (activeTab === 'settings') {
   }} /><BottomNav activeTab="settings" onChange={(tab) => setActiveTab(tab)} onInboxPress={handleInboxPress} unreadCount={unreadCount} /></View>;
   }
 
+
+
   return (
     <View style={styles.container}>
       {/* Trip request handling is now done globally via GlobalTripRequestPanel in _layout.tsx */}
@@ -1239,7 +1293,7 @@ if (activeTab === 'settings') {
       {/* FULL SCREEN MAP BACKGROUND - real interactive map */}
       <View style={styles.mapFullScreen}>
         <DriverMap
-          polyline={showPolyline ? activePolyline || undefined : undefined}
+          polyline={showPolyline ? shownPolyline || undefined : undefined}
           vehiclePosition={vehiclePosition || undefined}
           showVehicle={isOnline && locationRegistered}
           vehicleType={vehicleType}
@@ -1250,6 +1304,7 @@ if (activeTab === 'settings') {
           arrivalPosition={arrivalPosition}
           hasActiveTrip={hasActiveTrip}
           zones={showDemand ? demandZones : undefined}
+          onOffRoute={handleOffRoute}
         />
         <SidePanel
           items={[

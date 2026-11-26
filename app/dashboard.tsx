@@ -177,6 +177,9 @@ const getBackgroundGeolocation = () => {
 };
 const { width, height } = Dimensions.get('window');
 
+// Which tab to open when the dashboard is rebuilt (set before leaving to a Settings page).
+let pendingDashTab: string | null = null;
+
 export default function Dashboard() {
   const router = useRouter();
   const [isOnline, setIsOnline] = useState(false);
@@ -201,6 +204,7 @@ export default function Dashboard() {
   const [isLoading, setIsLoading] = useState(true);
   // Coming back from a Settings page (Security, Vehicle...) must land on Settings, not on Home.
   const [activeTab, setActiveTab] = useState(() => {
+    if (pendingDashTab) { const t = pendingDashTab; pendingDashTab = null; return t; }
     try {
       const t = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('dashTab') : null;
       if (t === 'settings') { sessionStorage.removeItem('dashTab'); return 'settings'; }
@@ -1255,6 +1259,7 @@ if (activeTab === 'trips') {
 if (activeTab === 'settings') {
   return <View style={styles.container}><DriverSettings driverData={driverData} hasActiveTrip={hasActiveTrip} beforeLogout={async () => { clearLocationHeartbeat(); await stopTracking(); if (driverId) await clearDriverPresence(driverId); }} onNavigate={(route) => {
   if (route === 'Vehicle and Documents' || route.toLowerCase() === 'security') {
+    pendingDashTab = 'settings'; // survives the dashboard being rebuilt when the driver comes back
     try { if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('dashTab', 'settings'); } catch { /* storage not available */ }
   }
   if (route === 'Vehicle and Documents') router.push('/vehicle-information');

@@ -199,7 +199,14 @@ export default function Dashboard() {
   };
   const [locationPermissionDenied, setLocationPermissionDenied] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('home');
+  // Coming back from a Settings page (Security, Vehicle...) must land on Settings, not on Home.
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const t = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('dashTab') : null;
+      if (t === 'settings') { sessionStorage.removeItem('dashTab'); return 'settings'; }
+    } catch { /* storage not available */ }
+    return 'home';
+  });
 
   // Active ride state for location updates (trip managed by GlobalTripRequestPanel)
   const [rtdbActive, setRtdbActive] = useState<{ orderId: string; status: string } | null>(null);
@@ -1247,6 +1254,9 @@ if (activeTab === 'trips') {
   
 if (activeTab === 'settings') {
   return <View style={styles.container}><DriverSettings driverData={driverData} hasActiveTrip={hasActiveTrip} beforeLogout={async () => { clearLocationHeartbeat(); await stopTracking(); if (driverId) await clearDriverPresence(driverId); }} onNavigate={(route) => {
+  if (route === 'Vehicle and Documents' || route.toLowerCase() === 'security') {
+    try { if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('dashTab', 'settings'); } catch { /* storage not available */ }
+  }
   if (route === 'Vehicle and Documents') router.push('/vehicle-information');
   else if (route.toLowerCase() === 'security') router.push('/forgot-password');
   else Alert.alert(route, 'This section is coming soon.');
